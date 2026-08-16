@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { EventPayloads, hashEvent, uuidv7, type EventType } from '@fv/contracts';
 import { audit } from '../common/audit.js';
+import { withLogDeleteAllowed } from '../common/append-only.js';
 import { AppError } from '../common/errors.js';
 import { log } from '../common/logger.js';
 import { requireActor } from '../common/request-context.js';
@@ -164,10 +165,11 @@ export class HistoryImportService {
      * stock take instead, which is the tool for disagreeing with the past
      * without erasing it.
      */
-    const removed = await this.prisma.raw.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe("SET LOCAL factoryvision.allow_log_delete = 'on'");
-      return tx.event.deleteMany({ where: { tenantId: actor.tenantId, provenance: 'import' } });
-    });
+    const removed = await this.prisma.raw.$transaction(async (tx) =>
+      withLogDeleteAllowed(tx, () =>
+        tx.event.deleteMany({ where: { tenantId: actor.tenantId, provenance: 'import' } }),
+      ),
+    );
 
     await this.projector.rebuild(actor.tenantId);
     await audit(this.prisma, {

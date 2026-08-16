@@ -20,8 +20,26 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// TEMPORARY — MySQL for the Hostinger shared-hosting trial.
+//
+// BP-01 above still stands and PostgreSQL remains the destination; this is a
+// hosting constraint, not a change of mind. The Postgres schema, its migrations
+// and its append-only triggers are preserved verbatim on the `postgres-version`
+// branch, and moving back is `git checkout postgres-version -- apps/api/prisma`
+// plus the two `SET LOCAL` call sites noted in `fv_refuse_mutation` below.
+//
+// What this costs while it lasts, so nobody discovers it by surprise:
+//
+//  1. `jsonb` becomes `json`. Payloads still store and read identically, but
+//     MySQL cannot index inside them. Nothing does today; a future report over
+//     `payload` would be a table scan here and an index scan on Postgres.
+//  2. String comparison is case- AND accent-insensitive by default collation.
+//     `@@unique([tenantId, sku])` now treats `ABC-1` and `abc-1` as the same
+//     SKU. Stricter than Postgres, so it rejects rather than duplicates — the
+//     safe direction, but it IS a behaviour change.
+//  3. `SET LOCAL` has no MySQL equivalent. See the append-only migration.
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -206,13 +224,15 @@ model Conflict {
   id            String    @id
   tenantId      String
   eventId       String
-  reason        String
+  /// Free text, and a conflict explanation that gets cut off at 191 characters
+  /// is exactly the one a warehouse head cannot act on.
+  reason        String    @db.Text
   detectedAt    DateTime  @default(now())
   /// Both versions kept whole — L04 shows them side by side, merges nothing.
   incomingEvent Json
   serverVersion Json?
   resolvedAt    DateTime?
-  resolution    String?
+  resolution    String?   @db.Text
 
   @@index([tenantId, resolvedAt])
   @@map("conflict")
@@ -224,18 +244,37 @@ model Conflict {
 /// any time (B-032). It exists so a report does not replay 200,000 movements to
 /// answer "how much flour is on rack A3".
 model StockLine {
-  id         String  @id
-  tenantId   String
-  productId  String
-  batchId    String?
-  locationId String
-  status     String
+  /// Lengths are pinned here and NOWHERE ELSE in this schema, for one reason:
+  /// the six-column unique below. MySQL caps an InnoDB index key at 3072 bytes
+  /// and Prisma's default `String` is VARCHAR(191) — at 4 bytes per utf8mb4
+  /// character that is 764 bytes a column, so six of them is 4584 and the index
+  /// simply refuses to be created. Every other index in this file has at most
+  /// three string columns (2292 bytes) and needs no help.
+  ///
+  /// 64 covers every id this app generates — UUIDv7 is 36 characters — and
+  /// holds the key at 1536 bytes, leaving room for a seventh column later.
+  ///
+  /// `id` is the exception and is NOT part of that unique, so it gets no
+  /// benefit from being short. It is not a UUID either: `projector.service.ts`
+  /// builds it as `tenantId:productId|batchId|locationId|status` and slices the
+  /// result to 200. The column matches that slice exactly — anything less and
+  /// the projector writes a stock line MySQL refuses, which surfaces as a 500
+  /// on event ingest and not as anything resembling a column-width problem.
+  id         String  @id @db.VarChar(200)
+  tenantId   String  @db.VarChar(64)
+  productId  String  @db.VarChar(64)
+  batchId    String? @db.VarChar(64)
+  locationId String  @db.VarChar(64)
+  /// 64, not 32: the longest status in the domain today is DAMAGED_IN_TRANSIT
+  /// at 18 characters, and the index budget above has room to spare. Being
+  /// tight here buys nothing and costs another 500 nobody can read.
+  status     String  @db.VarChar(64)
   /// Decimal, not float. See the header note.
   quantity   Decimal @db.Decimal(24, 6)
 
   /// Fase 4 (3PL) — always "self" in Fase 1. Costs nothing now, cannot be
   /// added later without touching every stock row ever written (PRD §9.3).
-  ownerParty String @default("self")
+  ownerParty String @default("self") @db.VarChar(64)
 
   updatedAt DateTime @updatedAt
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -288,7 +327,12 @@ model Product {
   name          String
   itemClass     String
   baseUnit      String
-  conversions   Json     @default("[]")
+  /// No `@default("[]")` here: MySQL refuses a literal default on a JSON column
+  /// and Prisma will not emit one. Safe to drop, because the value is never
+  /// left to the database — `master.controller.ts` parses it through
+  /// `z.array(UnitConversionInput).default([])`, so every write already carries
+  /// an explicit array. Restore the default when moving back to Postgres.
+  conversions   Json
   shelfLifeDays Int?
   minimumStock  Decimal? @db.Decimal(24, 6)
   /// Weighted average cost per base unit. Hidden from OPERATOR and PRODUCTION
@@ -392,10 +436,10 @@ model PurchaseOrder {
   orderDate  DateTime
   /// Mandatory: no ETA means no arrival task, and F25 loses its main source.
   eta        DateTime
-  note       String?
+  note       String?   @db.Text
   cancelled  Boolean   @default(false)
   closedAt   DateTime?
-  closeReason String?
+  closeReason String?  @db.Text
 
   tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   lines  PurchaseOrderLine[]
@@ -474,8 +518,10 @@ model TenantConfig {
 model Photo {
   id         String    @id
   tenantId   String
-  storageKey String
-  contentType String
+  /// An object key with a tenant prefix and a UUID overruns VARCHAR(191).
+  /// Not indexed, so length is free.
+  storageKey String    @db.VarChar(512)
+  contentType String   @db.VarChar(128)
   byteSize   Int?
   uploadedAt DateTime?
   createdAt  DateTime  @default(now())
@@ -494,9 +540,13 @@ model PushSubscription {
   id        String   @id
   tenantId  String
   userId    String
-  endpoint  String
-  p256dh    String
-  auth      String
+  /// An FCM push endpoint runs 200–500 characters, so the VARCHAR(191) Prisma
+  /// would otherwise pick would truncate every subscription this table exists
+  /// to hold. 512 characters is 2048 bytes — still inside the 3072-byte index
+  /// key limit, so the unique below survives.
+  endpoint  String   @db.VarChar(512)
+  p256dh    String   @db.VarChar(255)
+  auth      String   @db.VarChar(255)
   createdAt DateTime @default(now())
   failedAt  DateTime?
 
@@ -540,7 +590,7 @@ model Approval {
   decidedBy  String?
   decidedAt  DateTime?
   decision   String?
-  note       String?
+  note       String?  @db.Text
   payload    Json
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -563,7 +613,7 @@ model AdminAudit {
   subjectId String?
   before    Json?
   after     Json?
-  reason    String?
+  reason    String?  @db.Text
   at        DateTime @default(now())
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)

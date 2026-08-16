@@ -1,17 +1,24 @@
 # `@fv/api` — FactoryVision backend
 
-NestJS (Fastify) + Prisma + PostgreSQL. Implements the whole P0 backend scope of
+NestJS (Fastify) + Prisma + MySQL. Implements the whole P0 backend scope of
 [Backend Development Plan](../../docs/Backend-Development-Plan.md) — B-001 to B-092.
+
+> **MySQL is temporary.** PostgreSQL is still the destination (BP-01); MySQL is
+> what the Hostinger shared-hosting trial offers. The PostgreSQL schema and its
+> migrations are preserved on the `postgres-version` branch, and the header of
+> [`prisma/schema.prisma`](prisma/schema.prisma) lists exactly what the port
+> costs and how to undo it.
 
 ## Running it
 
 ```bash
-# Once: a database to develop against
-docker run -d --name fv-postgres \
-  -e POSTGRES_PASSWORD=factoryvision -e POSTGRES_USER=factoryvision \
-  -e POSTGRES_DB=factoryvision -p 55432:5432 postgres:16-alpine
-docker exec fv-postgres psql -U factoryvision -d factoryvision \
-  -c "CREATE DATABASE factoryvision_test OWNER factoryvision;"
+# Once: a database to develop against. `root` because creating the append-only
+# triggers needs the TRIGGER privilege, which the auto-created user lacks.
+docker run -d --name fv-mysql \
+  -e MYSQL_ROOT_PASSWORD=factoryvision -e MYSQL_DATABASE=factoryvision_test \
+  -p 33306:3306 mysql:8.0
+docker exec fv-mysql mysql -uroot -pfactoryvision \
+  -e "CREATE DATABASE IF NOT EXISTS factoryvision;"
 
 pnpm --filter @fv/api db:deploy    # apply migrations
 pnpm --filter @fv/api dev          # http://localhost:3000

@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import type { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { uuidv7 } from '@fv/contracts';
 import { buildApp } from '../src/bootstrap.js';
+import { withLogDeleteAllowed } from '../src/common/append-only.js';
 import { RateLimitService } from '../src/common/rate-limit.service.js';
 import { setEnvForTesting, loadEnv } from '../src/config/env.js';
 
@@ -26,9 +27,12 @@ import { setEnvForTesting, loadEnv } from '../src/config/env.js';
  * running for six months.
  */
 
+// TEMPORARY — MySQL, for as long as the deployment target is Hostinger shared
+// hosting. `root` because creating the append-only triggers needs the TRIGGER
+// privilege, which the container's auto-created user is not granted.
 const TEST_DATABASE_URL =
   process.env.TEST_DATABASE_URL ??
-  'postgresql://factoryvision:factoryvision@localhost:55432/factoryvision_test?schema=public';
+  'mysql://root:factoryvision@127.0.0.1:33306/factoryvision_test';
 
 let cachedAvailability: boolean | null = null;
 
@@ -93,14 +97,52 @@ export async function startTestApp(): Promise<TestApp> {
     // through the file — and the failure would look like a bug in registration.
     app.get(RateLimitService).resetAll();
 
-    // Order does not matter with CASCADE, and listing tables by hand would rot
-    // the moment a model is added.
-    const tables = await prisma.$queryRaw<{ tablename: string }[]>`
-      SELECT tablename FROM pg_tables
-      WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`;
+    // Listing tables by hand would rot the moment a model is added, so ask the
+    // database. `DATABASE()` scopes this to the schema in the connection URL —
+    // MySQL's `information_schema` spans every schema on the server, and an
+    // unscoped query here would happily truncate a neighbouring database.
+    const tables = await prisma.$queryRaw<{ TABLE_NAME: string }[]>`
+      SELECT TABLE_NAME FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_TYPE = 'BASE TABLE'
+        AND TABLE_NAME <> '_prisma_migrations'`;
     if (tables.length === 0) return;
-    const list = tables.map((t) => `"public"."${t.tablename}"`).join(', ');
-    await prisma.$executeRawUnsafe(`TRUNCATE ${list} RESTART IDENTITY CASCADE`);
+
+    // DELETE, not TRUNCATE, and the difference is not a matter of taste.
+    //
+    // PostgreSQL emptied all 25 tables with one `TRUNCATE ... CASCADE`. MySQL
+    // has neither CASCADE nor multi-table TRUNCATE, so the direct translation is
+    // 25 separate TRUNCATEs — and TRUNCATE is DDL. Measured on 8.0.46: 8192 ms
+    // per reset against 45 ms for the same 25 tables via DELETE. Once per test
+    // across this suite that was ~745 s of the 1077 s the run took, which is the
+    // difference between a suite people run and a suite people skip.
+    //
+    // DELETE is DML, so unlike TRUNCATE it DOES fire the append-only triggers on
+    // `event` and `admin_audit`. Hence `withLogDeleteAllowed`, the same helper
+    // production uses — the test path and the real path agree about how that
+    // guard is opened, which is the point of having one helper.
+    //
+    // All of it inside ONE interactive transaction, because both switches are
+    // connection-scoped: `SET FOREIGN_KEY_CHECKS` and the flag apply to whatever
+    // connection ran them, and Prisma hands out pooled connections per query. A
+    // bare sequence would set the flag on one connection and delete on another,
+    // which fails as a blocked DELETE — intermittently, in whichever test drew
+    // the wrong connection.
+    //
+    // AUTO_INCREMENT is not reset by DELETE. Harmless here: every id in this
+    // schema is a string the application supplies.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 0');
+      try {
+        await withLogDeleteAllowed(tx, async () => {
+          for (const { TABLE_NAME } of tables) {
+            await tx.$executeRawUnsafe(`DELETE FROM \`${TABLE_NAME}\``);
+          }
+        });
+      } finally {
+        await tx.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 1');
+      }
+    });
   };
 
   return {

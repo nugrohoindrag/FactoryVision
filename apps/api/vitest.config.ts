@@ -17,7 +17,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
     /**
-     * Integration tests share one Postgres schema per file and truncate between
+     * Integration tests share one database per file and truncate between
      * cases; running files in parallel would have them truncating each other's
      * rows. Unit tests do not care, and there are not enough files here for the
      * serialisation to cost anything measurable.

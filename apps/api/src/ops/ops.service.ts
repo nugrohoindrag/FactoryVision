@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { verifyChain, type HashableEvent } from '@fv/contracts';
+import { withLogDeleteAllowed } from '../common/append-only.js';
 import { AppError } from '../common/errors.js';
 import { log } from '../common/logger.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -175,8 +176,7 @@ export class OpsService {
     }
 
     await this.prisma.raw.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe("SET LOCAL factoryvision.allow_log_delete = 'on'");
-      await tx.tenant.delete({ where: { id: tenantId } });
+      await withLogDeleteAllowed(tx, () => tx.tenant.delete({ where: { id: tenantId } }));
     });
 
     log().warn({ tenantId, name: tenant.name }, 'Tenant deleted at customer request');

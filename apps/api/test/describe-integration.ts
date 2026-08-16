@@ -20,14 +20,14 @@ export async function integrationSuite(name: string, fn: () => void): Promise<vo
       describe(name, () => {
         throw new Error(
           'REQUIRE_DB=1 but the test database is unreachable. Start it with:\n' +
-            '  docker run -d --name fv-postgres -e POSTGRES_PASSWORD=factoryvision \\\n' +
-            '    -e POSTGRES_USER=factoryvision -e POSTGRES_DB=factoryvision \\\n' +
-            '    -p 55432:5432 postgres:16-alpine',
+            '  docker run -d --name fv-mysql -e MYSQL_ROOT_PASSWORD=factoryvision \\\n' +
+            '    -e MYSQL_DATABASE=factoryvision_test \\\n' +
+            '    -p 33306:3306 mysql:8.0',
         );
       });
       return;
     }
-    describe.skip(`${name} — SKIPPED, no test database on localhost:55432`, fn);
+    describe.skip(`${name} — SKIPPED, no test database on 127.0.0.1:33306`, fn);
     return;
   }
 

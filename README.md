@@ -12,7 +12,7 @@ Dokumen yang mengikat ada di [`docs/`](docs/):
 
 ```
 apps/wms/           React + Vite + Tailwind, PWA — dua shell (Lapangan & Kantor)
-apps/api/           NestJS (Fastify) + Prisma + PostgreSQL — ingest event, projeksi, laporan
+apps/api/           NestJS (Fastify) + Prisma + MySQL — ingest event, projeksi, laporan
 packages/contracts/ Skema Zod, tipe event, rantai hash & UUIDv7 — dipakai klien DAN server
 packages/domain/    Logika murni: projeksi stok, hitung bon, konversi satuan, FEFO
 packages/tokens/    globals.css + preset Tailwind, dipakai wms & landing
@@ -27,7 +27,7 @@ jadi ia dibangun dan diuji sebelum layar mana pun (Tech Stack §7).
 ```bash
 pnpm install
 pnpm dev              # apps/wms di http://localhost:5173
-pnpm --filter @fv/api dev   # backend di http://localhost:3000 (butuh PostgreSQL)
+pnpm --filter @fv/api dev   # backend di http://localhost:3000 (butuh MySQL)
 pnpm test             # uji unit seluruh workspace
 pnpm typecheck
 pnpm --filter @fv/wms build
@@ -37,7 +37,9 @@ pnpm --filter @fv/wms e2e            # Playwright di 360 · 768 · 1024 · 1440
 ```
 
 Butuh Node ≥20 dan pnpm 11. Sekali di awal: `pnpm --filter @fv/wms exec playwright install chromium`.
-Backend butuh PostgreSQL — cara menyalakannya ada di [`apps/api/README.md`](apps/api/README.md).
+Backend butuh MySQL — cara menyalakannya ada di [`apps/api/README.md`](apps/api/README.md).
+MySQL ini **sementara**, mengikuti batasan Hostinger shared hosting; PostgreSQL tetap tujuan
+akhirnya dan versinya tersimpan utuh di branch `postgres-version`.
 
 ## Aturan yang tidak boleh dilanggar
 
