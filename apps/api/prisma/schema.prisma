@@ -1,0 +1,574 @@
+// FactoryVision — server schema (B-004).
+//
+// BP-01 is decided here: PostgreSQL from the start. Tech Stack §1.3 named it as
+// the destination anyway, and starting there deletes task B-089 (the MySQL →
+// Postgres migration) entirely. What the event log actually needs — `jsonb`
+// payloads, `numeric` quantities, partial indexes on tenant + status — is
+// native here and emulated everywhere else.
+//
+// Two rules run through every model below:
+//
+//  1. **`tenantId` on every row.** Not because multi-tenancy is elegant, but
+//     because retrofitting it after the fact means touching every query in the
+//     product (PRD F13.1). It is enforced in the Prisma client extension, not
+//     remembered per query.
+//  2. **Quantities are `Decimal`, never `Float`.** `0.1 + 0.2 !== 0.3` means a
+//     material issue that can never close cleanly (Tech Stack §2.4). They enter
+//     and leave the API as decimal strings and are computed with big.js.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A factory. Created by register (B-013) with three fields and nothing more:
+/// every extra field at signup moves `time-to-value < 48h` further away.
+model Tenant {
+  id        String   @id
+  name      String
+  createdAt DateTime @default(now())
+
+  /// Trial ends → the tenant becomes READ-ONLY, never locked out (PRD F13.1).
+  /// Withholding a customer's own data is the fastest way to lose trust, and
+  /// that holds even when they have not paid.
+  trialEndsAt DateTime
+  paidUntil   DateTime?
+
+  users             User[]
+  devices           Device[]
+  events            Event[]
+  products          Product[]
+  locations         Location[]
+  partners          Partner[]
+  batches           Batch[]
+  productionLines   ProductionLocation[]
+  purchaseOrders    PurchaseOrder[]
+  boms              Bom[]
+  photos            Photo[]
+  pushSubscriptions PushSubscription[]
+  config            TenantConfig?
+  syncCursors       SyncCursor[]
+  stockLines        StockLine[]
+  checkpoints       ProjectionCheckpoint[]
+  alerts            Alert[]
+  approvals         Approval[]
+  adminAudits       AdminAudit[]
+  otpRequests       OtpRequest[]
+
+  @@map("tenant")
+}
+
+enum Role {
+  OPERATOR
+  PRODUCTION
+  QC
+  WAREHOUSE_HEAD
+  OWNER
+}
+
+model User {
+  id       String  @id
+  tenantId String
+  /// E.164. The login identity — there is no password anywhere in this product.
+  phone    String
+  name     String
+  role     Role
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  devices   Device[]
+  sessions  Session[]
+
+  /// Globally unique: one phone is one person. Multi-tenant membership is a
+  /// Fase 2 problem and inventing it now would be inventing it wrong.
+  @@unique([phone])
+  @@index([tenantId, role])
+  @@map("app_user")
+}
+
+/// B-017 — known device vs new device.
+///
+/// This table is the whole reason L01 can say "offline + known device → sign in
+/// locally" and "offline + new device → blocked". Without it the client would
+/// be guessing, and pretending to verify is worse than refusing.
+model Device {
+  id         String   @id
+  tenantId   String
+  userId     String
+  label      String   @default("")
+  firstSeen  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  revokedAt  DateTime?
+
+  /// Head of this device's hash chain — the last event we accepted from it.
+  /// Per device, never global: a device writing offline for a week cannot
+  /// possibly chain onto events it has not seen (Backend Plan §3.2).
+  lastEventHash String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId])
+  @@map("device")
+}
+
+model Session {
+  id               String    @id
+  tenantId         String
+  userId           String
+  deviceId         String
+  /// Only the hash is stored. A leaked database must not be a set of live logins.
+  refreshTokenHash String
+  issuedAt         DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  /// Rotation: the successor's id, so a replayed old token is detectable.
+  replacedById     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, userId])
+  @@index([refreshTokenHash])
+  @@map("session")
+}
+
+/// B-014 — OTP with a lockout that is counted, not hoped for.
+model OtpRequest {
+  id         String    @id
+  tenantId   String?
+  phone      String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  lockedUntil DateTime?
+  createdAt  DateTime  @default(now())
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([phone, createdAt])
+  @@map("otp_request")
+}
+
+/// The movement log. Append-only: no UPDATE, no DELETE, enforced by database
+/// grants in production (B-025), not only by the absence of code that does it.
+///
+/// Stock, PO status, issue balances and tasks are all PROJECTIONS over this
+/// table. Nothing here is ever corrected in place — a mistake is corrected by a
+/// new event, which is what keeps the audit trail whole (PRD §8).
+model Event {
+  /// UUIDv7 from the device. Also the ordering key WITHIN one device.
+  id       String @id
+  tenantId String
+  type     String
+
+  /// Device clock. Trusted for display and reports, never for replay order —
+  /// a warehouse phone can be hours out (Backend Plan §3.2).
+  occurredAt DateTime
+  /// Server clock, stamped on ingest. THIS is the cross-device replay order.
+  receivedAt DateTime @default(now())
+
+  actorId   String
+  actorRole Role
+  deviceId  String
+
+  prevHash String?
+  hash     String
+
+  payload Json
+
+  /// Set on events replayed out of an Excel import (B-060) so a stock card can
+  /// show where a number came from. Nothing else distinguishes them: an
+  /// imported movement is a movement.
+  provenance String @default("device")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// The replay index: one tenant's log in server order.
+  @@index([tenantId, receivedAt, id])
+  /// The chain index: one device's log in its own order.
+  @@index([tenantId, deviceId, id])
+  @@index([tenantId, type])
+  @@map("event")
+}
+
+/// B-029 — a disagreement a human must settle (PRD F14, screen L04).
+///
+/// Deliberately rare. Every conflict is work added to the warehouse head's day,
+/// and a system that cries conflict easily is a system whose conflict screen
+/// stops being opened.
+model Conflict {
+  id            String    @id
+  tenantId      String
+  eventId       String
+  reason        String
+  detectedAt    DateTime  @default(now())
+  /// Both versions kept whole — L04 shows them side by side, merges nothing.
+  incomingEvent Json
+  serverVersion Json?
+  resolvedAt    DateTime?
+  resolution    String?
+
+  @@index([tenantId, resolvedAt])
+  @@map("conflict")
+}
+
+/// B-034 — the stock projection, materialised.
+///
+/// Derived data, and it says so: it can be dropped and rebuilt from `event` at
+/// any time (B-032). It exists so a report does not replay 200,000 movements to
+/// answer "how much flour is on rack A3".
+model StockLine {
+  id         String  @id
+  tenantId   String
+  productId  String
+  batchId    String?
+  locationId String
+  status     String
+  /// Decimal, not float. See the header note.
+  quantity   Decimal @db.Decimal(24, 6)
+
+  /// Fase 4 (3PL) — always "self" in Fase 1. Costs nothing now, cannot be
+  /// added later without touching every stock row ever written (PRD §9.3).
+  ownerParty String @default("self")
+
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, productId, batchId, locationId, status, ownerParty])
+  @@index([tenantId, productId])
+  @@index([tenantId, locationId])
+  @@map("stock_line")
+}
+
+/// How far the projector has replayed, per tenant. The difference between
+/// "rebuild the world every time" and "apply what arrived since breakfast".
+model ProjectionCheckpoint {
+  tenantId      String   @id
+  lastEventId   String?
+  lastReceived  DateTime?
+  rebuiltAt     DateTime @default(now())
+  eventsApplied Int      @default(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("projection_checkpoint")
+}
+
+/// B-040 — where each device has read up to in the downstream feed.
+///
+/// Stored server-side as well as client-side so a device that loses its local
+/// database can be told the truth about what it already has, instead of being
+/// handed the whole log again over 3G.
+model SyncCursor {
+  id           String   @id
+  tenantId     String
+  deviceId     String
+  lastReceived DateTime?
+  lastEventId  String?
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, deviceId])
+  @@map("sync_cursor")
+}
+
+/* --- master data --------------------------------------------------------- */
+
+model Product {
+  id            String   @id
+  tenantId      String
+  sku           String
+  name          String
+  itemClass     String
+  baseUnit      String
+  conversions   Json     @default("[]")
+  shelfLifeDays Int?
+  minimumStock  Decimal? @db.Decimal(24, 6)
+  /// Weighted average cost per base unit. Hidden from OPERATOR and PRODUCTION
+  /// at the serialisation layer, not in the UI (B-019).
+  averageCost   Decimal? @db.Decimal(24, 6)
+  active        Boolean  @default(true)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, itemClass])
+  @@map("product")
+}
+
+/// PRD v1.4 — depth is a NUMBER and what each depth is called is tenant
+/// configuration. The old fixed `WAREHOUSE → ZONE → RACK` fitted exactly one
+/// shape of factory and quietly punished every other one.
+model Location {
+  id       String  @id
+  tenantId String
+  code     String
+  name     String
+  parentId String?
+  /// 0 = top. Derived from the parent chain, stored so queries need not walk it.
+  depth    Int     @default(0)
+  /// Asked once and stored — never inferred from being a leaf. Plenty of
+  /// factories keep bulk material on the floor of a zone that also has racks,
+  /// and guessing offers the wrong places at putaway.
+  storable Boolean @default(false)
+  virtual  Boolean @default(false)
+  active   Boolean @default(true)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, parentId])
+  @@index([tenantId, depth])
+  @@map("location")
+}
+
+model Partner {
+  id       String  @id
+  tenantId String
+  code     String
+  name     String
+  kind     String
+  phone    String?
+  active   Boolean @default(true)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, kind])
+  @@map("partner")
+}
+
+model Batch {
+  id              String    @id
+  tenantId        String
+  productId       String
+  batchNo         String
+  producedOn      DateTime?
+  expiryDate      DateTime?
+  supplierId      String?
+  purchaseOrderId String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, productId, batchNo])
+  @@index([tenantId, expiryDate])
+  @@map("batch")
+}
+
+/// Line → Machine / Area. Separate from `Location` on purpose: these hold no
+/// permanent stock and never join a warehouse stock take, but they are the
+/// mandatory destination of every material request and the holder of
+/// `IN PRODUCTION` (PRD §9.3).
+model ProductionLocation {
+  id       String  @id
+  tenantId String
+  code     String
+  name     String
+  parentId String?
+  level    String
+  active   Boolean @default(true)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@map("production_location")
+}
+
+/// A delivery plan, not a procurement control (PRD F24). `status` is absent on
+/// purpose — it is projected from receipt events, because a stored status
+/// drifts from its own receipts after an offline sync.
+model PurchaseOrder {
+  id         String    @id
+  tenantId   String
+  poNo       String
+  supplierId String
+  orderDate  DateTime
+  /// Mandatory: no ETA means no arrival task, and F25 loses its main source.
+  eta        DateTime
+  note       String?
+  cancelled  Boolean   @default(false)
+  closedAt   DateTime?
+  closeReason String?
+
+  tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lines  PurchaseOrderLine[]
+
+  @@unique([tenantId, poNo])
+  @@index([tenantId, eta])
+  @@index([tenantId, supplierId])
+  @@map("purchase_order")
+}
+
+model PurchaseOrderLine {
+  id              String  @id
+  tenantId        String
+  purchaseOrderId String
+  productId       String
+  quantityOrdered Decimal @db.Decimal(24, 6)
+  unit            String
+  unitPrice       Decimal? @db.Decimal(24, 6)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, purchaseOrderId])
+  @@map("purchase_order_line")
+}
+
+/// One active BOM per product, no versioning in P0 (PRD F21).
+model Bom {
+  id             String  @id
+  tenantId       String
+  productId      String
+  outputQuantity Decimal @db.Decimal(24, 6)
+  outputUnit     String
+  /// A recipe no human has checked. Travels with the variance report, because
+  /// variance against an unverified recipe is not yet actionable (PRD §12).
+  verified       Boolean @default(false)
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lines  BomLine[]
+
+  @@unique([tenantId, productId])
+  @@map("bom")
+}
+
+model BomLine {
+  id                   String   @id
+  tenantId             String
+  bomId                String
+  productId            String
+  standardQuantity     Decimal  @db.Decimal(24, 6)
+  unit                 String
+  standardShrinkagePct Decimal? @db.Decimal(24, 6)
+
+  bom Bom @relation(fields: [bomId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, bomId])
+  @@map("bom_line")
+}
+
+/// §9.2 — everything that will one day be a template, built now as per-tenant
+/// configuration with exactly one default value. No template engine in Fase 1.
+model TenantConfig {
+  tenantId String   @id
+  /// Whole config document. Versioned so a device can tell whether the copy it
+  /// cached offline is still current (B-058).
+  value    Json
+  version  Int      @default(1)
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_config")
+}
+
+/* --- files, alerts, approvals -------------------------------------------- */
+
+model Photo {
+  id         String    @id
+  tenantId   String
+  storageKey String
+  contentType String
+  byteSize   Int?
+  uploadedAt DateTime?
+  createdAt  DateTime  @default(now())
+  /// Which event this photo belongs to. Null until the event arrives — photos
+  /// and events travel separately and can land in either order.
+  eventId    String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, eventId])
+  @@index([tenantId, uploadedAt])
+  @@map("photo")
+}
+
+model PushSubscription {
+  id        String   @id
+  tenantId  String
+  userId    String
+  endpoint  String
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  failedAt  DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([endpoint])
+  @@index([tenantId, userId])
+  @@map("push_subscription")
+}
+
+/// B-066/B-070 — one row per live alert, so "open issue past 24h" notifies once
+/// and stops when the issue closes, instead of once per scheduler tick.
+model Alert {
+  id         String    @id
+  tenantId   String
+  kind       String
+  /// What the alert is about: an issue id, a PO id, a product id.
+  subjectId  String
+  severity   String    @default("warning")
+  payload    Json
+  firstSeen  DateTime  @default(now())
+  lastSeen   DateTime  @default(now())
+  notifiedAt DateTime?
+  clearedAt  DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, kind, subjectId])
+  @@index([tenantId, clearedAt])
+  @@map("alert")
+}
+
+/// B-068 — an adjustment above the tenant's threshold waits for the owner.
+model Approval {
+  id         String    @id
+  tenantId   String
+  kind       String
+  subjectId  String
+  requestedBy String
+  requestedAt DateTime @default(now())
+  decidedBy  String?
+  decidedAt  DateTime?
+  decision   String?
+  note       String?
+  payload    Json
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, decidedAt])
+  @@map("approval")
+}
+
+/// B-085 — the desk-work audit trail.
+///
+/// Warehouse movements are already audited by being events. This covers what
+/// events do not: who changed a price, who deactivated a rack, who invited a
+/// user, who closed a PO with an outstanding balance.
+model AdminAudit {
+  id        String   @id
+  tenantId  String
+  actorId   String?
+  action    String
+  subject   String
+  subjectId String?
+  before    Json?
+  after     Json?
+  reason    String?
+  at        DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, at])
+  @@index([tenantId, subject, subjectId])
+  @@map("admin_audit")
+}

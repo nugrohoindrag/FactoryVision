@@ -1,0 +1,25 @@
+{
+  "name": "factoryvision",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @fv/wms dev",
+    "build": "pnpm -r build",
+    "build:wms": "pnpm --filter @fv/wms build",
+    "build:api": "pnpm --filter @fv/api build",
+    "start:api": "pnpm --filter @fv/api start:prod",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "size": "pnpm --filter @fv/wms size",
+    "e2e": "pnpm --filter @fv/wms e2e"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+dist-ssr/
+.vite/
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+*.local
+*.log
+.env
+.env.*
+!.env.example
+dev-dist/
+stats.html
+
+# Agent tooling — local to each developer's machine.
+.claude/
+.commandcode/
+
+# Internal specs; the repo ships source only.
+docs/

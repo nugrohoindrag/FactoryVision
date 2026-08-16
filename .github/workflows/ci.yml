@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Scoped: the API suite needs a database and gets its own job below, where
+      # the container is guaranteed. Running it here without one would either
+      # fail confusingly or skip silently — and a suite that skips silently is a
+      # suite that stops running.
+      - name: Unit tests (client, domain, contracts)
+        run: pnpm --filter @fv/wms --filter @fv/domain --filter @fv/contracts test
+
+      - name: Build
+        run: pnpm --filter @fv/wms build
+
+      # Tech Stack §4: a budget that is not enforced automatically will be
+      # broken. React + shadcn make it easy to break without noticing, so the
+      # build FAILS here rather than warning.
+      - name: Performance budgets (JS, CSS, service-worker precache)
+        run: pnpm --filter @fv/wms size
+
+      # UI Spec §22 points 2, 9 and 11 — the rules that erode one commit at a
+      # time. Checked mechanically so they cannot rot between reviews.
+      - name: Design system compliance (T-111, T-112, T-113)
+        run: pnpm --filter @fv/wms audit:design
+
+      # DS §9. The palette once shipped with five AA failures nobody caught by
+      # looking, including the badge on every newly received item at 1.92:1.
+      - name: Colour contrast (WCAG AA)
+        run: pnpm --filter @fv/tokens audit:contrast
+
+  # B-011 — the backend, against a real PostgreSQL.
+  #
+  # `REQUIRE_DB=1` turns "no database" from a skip into a failure. Without it the
+  # integration suite could quietly stop running the day a service name changes,
+  # and nobody would notice until something it guards breaks in production.
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: factoryvision
+          POSTGRES_PASSWORD: factoryvision
+          POSTGRES_DB: factoryvision_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U factoryvision"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      REQUIRE_DB: '1'
+      TEST_DATABASE_URL: postgresql://factoryvision:factoryvision@localhost:55432/factoryvision_test?schema=public
+      DATABASE_URL: postgresql://factoryvision:factoryvision@localhost:55432/factoryvision_test?schema=public
+      JWT_SECRET: ci-secret-that-is-long-enough-for-the-schema-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @fv/api db:generate
+
+      # A migration that only ever runs on a database that already has the
+      # tables is a migration nobody has tested. This one starts from empty.
+      - name: Apply migrations from empty
+        run: pnpm --filter @fv/api db:deploy
+
+      - name: Typecheck
+        run: pnpm --filter @fv/api typecheck
+
+      - name: Production build
+        run: pnpm --filter @fv/api build
+
+      # Tech Stack §2.4. `0.1 + 0.2 !== 0.3` means a material issue that never
+      # closes cleanly and a variance report nobody believes. This has already
+      # caught a real violation.
+      - name: Decimal discipline (B-008)
+        run: node apps/api/scripts/audit-decimal.mjs
+
+      # Gates B0–B7, including the tenant-isolation NEGATIVE tests, the
+      # client↔server projection parity check, and the seven-day two-device
+      # offline sync.
+      - name: Integration tests
+        run: pnpm --filter @fv/api test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @fv/wms exec playwright install --with-deps chromium
+      - run: pnpm --filter @fv/wms e2e
+      - uses: actions/upload-artifact@v4
+        if: ${{ failure() || cancelled() }}
+        with:
+          name: playwright-report
+          path: apps/wms/playwright-report/
+          retention-days: 7

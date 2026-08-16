@@ -1,0 +1,3 @@
+/* Design tokens + Tailwind layers live in the shared package so the landing
+   page renders the same system (Tech Stack §3). Nothing app-specific here. */
+@import '@fv/tokens/globals.css';

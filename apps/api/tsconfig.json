@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022"],
+    "types": ["node", "vitest/globals"],
+    /**
+     * NestJS needs `experimentalDecorators`. It does NOT need
+     * `emitDecoratorMetadata` here, and that is deliberate: every injected
+     * dependency is declared with an explicit `@Inject(TOKEN)`, so the DI
+     * container never reads `design:paramtypes`.
+     *
+     * The reason is toolchain, not taste. `emitDecoratorMetadata` is a
+     * TypeScript-compiler feature that esbuild does not implement — and esbuild
+     * is what runs this code under `tsx` in dev and under Vitest in tests. A
+     * server that only boots under one specific compiler is a server that will
+     * one day fail to boot for a reason nobody can see in the diff.
+     */
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "test", "prisma"]
+}

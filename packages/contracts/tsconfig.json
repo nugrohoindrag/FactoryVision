@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    /**
+     * `DOM` is here for two globals and nothing else: `crypto` (Web Crypto) and
+     * `TextEncoder`, both used by the event hash chain in `hash.ts` and the id
+     * generator in `ids.ts`.
+     *
+     * They are the right choice precisely because they are NOT browser-only —
+     * Node has shipped both as globals since 18, so one implementation of the
+     * hash runs unchanged on the phone that writes the chain and on the server
+     * that verifies it. That is the whole reason those files live in this
+     * package (Backend Plan B-027).
+     *
+     * `types: []` stays: this package must not pick up Node or Vitest ambient
+     * types, or something Node-only would compile here and fail in the browser.
+     */
+    "lib": ["ES2022", "DOM"],
+    "types": []
+  },
+  "include": ["src"]
+}
