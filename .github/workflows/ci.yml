@@ -22,9 +22,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` on purpose. The action reads `packageManager` from
+      # package.json when this is omitted, so the pin lives in exactly one file.
+      # With both set, the two drift and the action refuses on the mismatch —
+      # and Hostinger's build already failed once on precisely that kind of
+      # disagreement about which pnpm is in charge.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -99,9 +102,12 @@ jobs:
       JWT_SECRET: ci-secret-that-is-long-enough-for-the-schema-check
     steps:
       - uses: actions/checkout@v4
+      # No `version:` on purpose. The action reads `packageManager` from
+      # package.json when this is omitted, so the pin lives in exactly one file.
+      # With both set, the two drift and the action refuses on the mismatch —
+      # and Hostinger's build already failed once on precisely that kind of
+      # disagreement about which pnpm is in charge.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -138,9 +144,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` on purpose. The action reads `packageManager` from
+      # package.json when this is omitted, so the pin lives in exactly one file.
+      # With both set, the two drift and the action refuses on the mismatch —
+      # and Hostinger's build already failed once on precisely that kind of
+      # disagreement about which pnpm is in charge.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
