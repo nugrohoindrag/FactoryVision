@@ -37,6 +37,19 @@ pnpm --filter @fv/wms e2e            # Playwright di 360 · 768 · 1024 · 1440
 ```
 
 Butuh Node ≥20 dan pnpm 11. Sekali di awal: `pnpm --filter @fv/wms exec playwright install chromium`.
+
+### Kenapa `pnpm` terdaftar sebagai devDependency
+
+Terlihat ganjil — pnpm mengelola dirinya sendiri — tapi ini yang membuat deploy bisa jalan.
+Script di root seperti `"build": "pnpm -r build"` memanggil `pnpm` lagi dari dalam sebuah shell.
+Shell itu hanya mewarisi `node_modules/.bin` pada PATH-nya, **bukan** PATH sistem. Di laptop
+hal ini tidak pernah terasa karena pnpm kebetulan terpasang global; di Hostinger pnpm datang
+lewat corepack dan tidak pernah sampai ke proses anak, sehingga setiap deploy berhenti di
+`sh: line 1: pnpm: command not found`. Mendaftarkannya sebagai dependensi menempatkan sebuah
+shim di `node_modules/.bin`, dan script root pun jalan di mana saja.
+
+Versinya dipaku sama persis dengan `packageManager`. Kalau salah satu dinaikkan, naikkan
+keduanya — dua pnpm yang berbeda pendapat adalah kegagalan deploy yang sudah pernah terjadi.
 Backend butuh MySQL — cara menyalakannya ada di [`apps/api/README.md`](apps/api/README.md).
 MySQL ini **sementara**, mengikuti batasan Hostinger shared hosting; PostgreSQL tetap tujuan
 akhirnya dan versinya tersimpan utuh di branch `postgres-version`.

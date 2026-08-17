@@ -20,6 +20,7 @@
     "e2e": "pnpm --filter @fv/wms e2e"
   },
   "devDependencies": {
+    "pnpm": "11.22.0",
     "typescript": "^5.6.3"
   }
 }
