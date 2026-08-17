@@ -74,7 +74,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
   ) => {
     const response = await test.app.inject({
       method: 'POST',
-      url: '/sync/events',
+      url: '/api/sync/events',
       headers: auth,
       payload: { events },
     });
@@ -101,7 +101,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
 
     const serverStock = await test.app.inject({
       method: 'GET',
-      url: '/stock',
+      url: '/api/stock',
       headers: tenant.auth,
     });
     expect(serverStock.statusCode).toBe(200);
@@ -121,7 +121,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
 
     const serverIssues = await test.app.inject({
       method: 'GET',
-      url: '/issues',
+      url: '/api/issues',
       headers: tenant.auth,
     });
     const rows = serverIssues.json() as { issueId: string; lines: { consumed: string }[] }[];
@@ -154,7 +154,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
     await push(events.filter((e) => e.deviceId === operator.deviceId), opAuth);
     await push(events.filter((e) => e.deviceId === production.deviceId), prodAuth);
 
-    const response = await test.app.inject({ method: 'GET', url: '/stock', headers: tenant.auth });
+    const response = await test.app.inject({ method: 'GET', url: '/api/stock', headers: tenant.auth });
     const { levels } = response.json() as { levels: { quantity: string; locationId: string }[] };
 
     const negative = levels.filter((line) => line.quantity.startsWith('-'));
@@ -233,7 +233,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
 
     const queue = await test.app.inject({
       method: 'GET',
-      url: '/sync/conflicts',
+      url: '/api/sync/conflicts',
       headers: tenant.auth,
     });
     expect((queue.json() as unknown[]).length).toBe(1);
@@ -268,7 +268,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
     expect(JSON.stringify(body.conflicts[0]?.serverVersion)).toMatch(/-/);
 
     // The event never entered the log, so the projection is untouched.
-    const stock = await test.app.inject({ method: 'GET', url: '/stock', headers: tenant.auth });
+    const stock = await test.app.inject({ method: 'GET', url: '/api/stock', headers: tenant.auth });
     const { levels } = stock.json() as { levels: { quantity: string }[] };
     expect(levels.every((line) => !line.quantity.startsWith('-'))).toBe(true);
   });
@@ -355,7 +355,7 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
     const oversized = Array.from({ length: 51 }, () => ({}));
     const response = await test.app.inject({
       method: 'POST',
-      url: '/sync/events',
+      url: '/api/sync/events',
       headers: opAuth,
       payload: { events: oversized },
     });
@@ -392,16 +392,16 @@ await integrationSuite('event ingest & projection (B-025 → B-038)', () => {
     await push(events.filter((e) => e.deviceId === operator.deviceId), opAuth);
     await push(events.filter((e) => e.deviceId === production.deviceId), prodAuth);
 
-    const before = await test.app.inject({ method: 'GET', url: '/stock', headers: tenant.auth });
+    const before = await test.app.inject({ method: 'GET', url: '/api/stock', headers: tenant.auth });
 
     const rebuilt = await test.app.inject({
       method: 'POST',
-      url: '/stock/rebuild',
+      url: '/api/stock/rebuild',
       headers: tenant.auth,
     });
     expect(rebuilt.statusCode).toBe(201);
 
-    const after = await test.app.inject({ method: 'GET', url: '/stock', headers: tenant.auth });
+    const after = await test.app.inject({ method: 'GET', url: '/api/stock', headers: tenant.auth });
 
     // The materialised table is a cache and nothing more. If dropping it
     // changed an answer, one of the two was lying about the warehouse.

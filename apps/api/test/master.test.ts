@@ -27,11 +27,11 @@ await integrationSuite('master data & documents (B-049 → B-060)', () => {
   });
 
   const post = (url: string, payload: Record<string, unknown>, auth = tenant.auth) =>
-    test.app.inject({ method: 'POST', url, headers: auth, payload });
+    test.app.inject({ method: 'POST', url: `/api${url}`, headers: auth, payload });
   const patch = (url: string, payload: Record<string, unknown>, auth = tenant.auth) =>
-    test.app.inject({ method: 'PATCH', url, headers: auth, payload });
+    test.app.inject({ method: 'PATCH', url: `/api${url}`, headers: auth, payload });
   const get = (url: string, auth = tenant.auth) =>
-    test.app.inject({ method: 'GET', url, headers: auth });
+    test.app.inject({ method: 'GET', url: `/api${url}`, headers: auth });
 
   const product = (over: Record<string, unknown> = {}) => ({
     name: 'Tepung Terigu',

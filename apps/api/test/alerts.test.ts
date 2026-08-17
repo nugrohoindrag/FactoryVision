@@ -51,11 +51,11 @@ await integrationSuite('alerts, approvals & photos (B-061 → B-070)', () => {
   });
 
   const push = (events: AnyEvent[], auth: { authorization: string }) =>
-    test.app.inject({ method: 'POST', url: '/sync/events', headers: auth, payload: { events } });
+    test.app.inject({ method: 'POST', url: '/api/sync/events', headers: auth, payload: { events } });
   const post = (url: string, payload: Record<string, unknown> = {}, auth = tenant.auth) =>
-    test.app.inject({ method: 'POST', url, headers: auth, payload });
+    test.app.inject({ method: 'POST', url: `/api${url}`, headers: auth, payload });
   const get = (url: string, auth = tenant.auth) =>
-    test.app.inject({ method: 'GET', url, headers: auth });
+    test.app.inject({ method: 'GET', url: `/api${url}`, headers: auth });
 
   /** An issue handed over and never closed — the condition PRD M2 is about. */
   async function openIssueOlderThanADay(): Promise<void> {
@@ -263,7 +263,13 @@ await integrationSuite('alerts, approvals & photos (B-061 → B-070)', () => {
   });
 
   it('reports storage and push honestly in /ready (B-010)', async () => {
-    const ready = (await get('/ready')).json() as {
+    // Not through `get()`: that helper prefixes `/api`, and `/ready` is one of
+    // the two routes deliberately excluded from the global prefix so uptime
+    // probes keep a stable URL. Going through the helper asked for
+    // `/api/ready`, which correctly does not exist.
+    const ready = (
+      await test.app.inject({ method: 'GET', url: '/ready', headers: tenant.auth })
+    ).json() as {
       status: string;
       checks: Record<string, { ok: boolean; detail?: string }>;
     };

@@ -19,6 +19,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1111.0",
     "@aws-sdk/s3-request-presigner": "^3.1111.0",
+    "@fastify/static": "^7.0.4",
     "@fv/contracts": "workspace:*",
     "@fv/domain": "workspace:*",
     "@nestjs/common": "^10.4.22",

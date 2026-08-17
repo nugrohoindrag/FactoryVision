@@ -48,6 +48,13 @@ const VerifyOtpInput = z.object({
   deviceLabel: z.string().max(120).optional(),
 });
 
+/** Same shape as `VerifyOtpInput`, minus the one field that proves anything. */
+const SignInWithoutOtpInput = z.object({
+  phone: Phone,
+  deviceId: z.string().uuid(),
+  deviceLabel: z.string().max(120).optional(),
+});
+
 const RefreshInput = z.object({ refreshToken: z.string().min(10) });
 
 @Controller('auth')
@@ -106,6 +113,27 @@ export class AuthController {
     // next operator signing in from the same factory wifi.
     this.limits.clear(`otpv:ip:${request.ip}`);
     this.limits.clear(`otp:phone:${body.phone}`);
+    return session;
+  }
+
+  /**
+   * Trial sign-in: a phone number and nothing else. Throws unless
+   * `AUTH_SKIP_OTP` is set, and configuration refuses that flag in production.
+   *
+   * Still rate limited per IP, and by the same counter the OTP path uses. The
+   * code is what is missing here, not the brakes — without this, the endpoint
+   * would be a way to enumerate which numbers have accounts, one request at a
+   * time, as fast as the network allows.
+   */
+  @Public()
+  @Post('sign-in')
+  async signInWithoutOtp(
+    @ZodBody(SignInWithoutOtpInput) body: z.infer<typeof SignInWithoutOtpInput>,
+    @Req() request: FastifyRequest,
+  ): Promise<SessionResult> {
+    this.limits.hit(`otpv:ip:${request.ip}`, LIMITS.otpVerify);
+    const session = await this.auth.signInWithoutOtp(body);
+    this.limits.clear(`otpv:ip:${request.ip}`);
     return session;
   }
 

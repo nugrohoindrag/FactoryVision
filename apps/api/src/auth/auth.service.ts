@@ -92,6 +92,57 @@ export class AuthService {
   }
 
   /**
+   * L01 without the code — the trial's way in, and nothing more than that.
+   *
+   * `verifyOtp` above minus one line: the call that proves the caller owns the
+   * number. Everything after it is identical on purpose, so the session, the
+   * device registration and the tokens a demo runs on are the same ones the
+   * real flow produces, and switching back changes how you sign in rather than
+   * what you get.
+   *
+   * Two guards, because this is the kind of thing that escapes:
+   *
+   *  - `AUTH_SKIP_OTP` must be set. Absent it, this throws rather than falling
+   *    back to something friendlier — a login that quietly weakens itself is
+   *    worse than one that stops.
+   *  - `loadEnv` refuses the flag outright in production.
+   *
+   * Neither protects a public deployment running NODE_ENV=development. That is
+   * a known and accepted gap for as long as the trial holds no real data; see
+   * the note on AUTH_SKIP_OTP in config/env.ts.
+   */
+  async signInWithoutOtp(input: {
+    phone: string;
+    deviceId: string;
+    deviceLabel?: string;
+  }): Promise<SessionResult> {
+    if (!this.env.AUTH_SKIP_OTP) {
+      throw new AppError('UNAUTHENTICATED', 'Sign-in without a code is not enabled');
+    }
+
+    const user = await this.prisma.raw.user.findUnique({ where: { phone: input.phone } });
+    if (!user || !user.active) {
+      // Deliberately the same message the OTP path gives an unknown number: a
+      // login that says "no such account" is a login that enumerates accounts.
+      throw new AppError('UNAUTHENTICATED', 'This account is no longer active');
+    }
+
+    log().warn(
+      { phone: input.phone },
+      'Session issued WITHOUT a code — AUTH_SKIP_OTP is on',
+    );
+
+    const device = await this.registerDevice({
+      deviceId: input.deviceId,
+      tenantId: user.tenantId,
+      userId: user.id,
+      label: input.deviceLabel ?? '',
+    });
+
+    return this.issueSession(user.id, user.tenantId, user.role, user.name, device.id);
+  }
+
+  /**
    * B-017 — a device is remembered the first time it is used, and stays
    * remembered until somebody revokes it.
    */

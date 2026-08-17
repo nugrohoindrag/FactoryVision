@@ -2,6 +2,7 @@ import type { Role } from '@fv/contracts';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEMO_TENANT_ID } from '@/db/fixtures';
+import type { SessionResponse } from '@/lib/api/client';
 
 /**
  * Active user context (UI Spec §24).
@@ -30,24 +31,85 @@ export const DEV_USERS: SessionUser[] = [
 
 export const DEV_TENANTS = [{ id: DEMO_TENANT_ID, name: 'Demo factory' }];
 
+/**
+ * Tokens from the server (T-104).
+ *
+ * Held in the same store as the user because they describe the same thing —
+ * who is signed in — and splitting them would let the two disagree: an app
+ * showing an operator's name while holding another operator's token is worse
+ * than one that is plainly signed out.
+ */
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+  /** Epoch ms. Compared before sync so a 401 mid-drain is the rare case. */
+  expiresAt: number;
+}
+
 interface SessionState {
   tenantId: string;
   user: SessionUser;
+  /** Null until sign-in, and after sign-out. */
+  tokens: AuthTokens | null;
+  /** Set by the server, not inferred: the trial can end mid-session. */
+  readOnly: boolean;
   setUser: (user: SessionUser) => void;
   setTenant: (tenantId: string) => void;
+  /** Adopts a session the API just issued — the only way `tokens` is filled. */
+  applySession: (session: SessionResponse) => void;
+  clearSession: () => void;
 }
 
 export const useSession = create<SessionState>()(
   persist(
     (set) => ({
+      // The dev picker's stand-ins remain the defaults so that every consumer
+      // of `tenantId` and `user` keeps a valid value and an unchanged type.
+      // T-020 promised that removing the picker would not require touching
+      // anything else, and this is where that promise is kept: sign-in
+      // OVERWRITES these rather than replacing the shape around them.
       tenantId: DEMO_TENANT_ID,
       user: DEV_USERS[0]!,
+      tokens: null,
+      readOnly: false,
       setUser: (user) => set({ user }),
       setTenant: (tenantId) => set({ tenantId }),
+      applySession: (session) =>
+        set({
+          tenantId: session.user.tenantId,
+          user: {
+            id: session.user.id,
+            name: session.user.name,
+            role: session.user.role as Role,
+          },
+          tokens: {
+            accessToken: session.accessToken,
+            refreshToken: session.refreshToken,
+            expiresAt: Date.now() + session.expiresIn * 1000,
+          },
+          readOnly: session.tenant.readOnly,
+        }),
+      clearSession: () =>
+        set({
+          tokens: null,
+          readOnly: false,
+          tenantId: DEMO_TENANT_ID,
+          user: DEV_USERS[0]!,
+        }),
     }),
     { name: 'fv.session' },
   ),
 );
+
+/**
+ * Is there a real, server-issued session?
+ *
+ * Deliberately NOT "is `user` set" — `user` always has a value so that the
+ * screens keep their types, which means it can never answer this question.
+ */
+export function isSignedIn(): boolean {
+  return useSession.getState().tokens !== null;
+}
 
 /**
  * Which shell a role lives in (UI Spec §2). The Warehouse Head works in both:

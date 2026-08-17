@@ -30,6 +30,21 @@ const EnvSchema = z.object({
 
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 
+  /**
+   * Absolute path to the built PWA, when this process is also the web server.
+   *
+   * Set it and the API serves `apps/wms/dist` at `/` with an SPA fallback;
+   * leave it unset and the process is an API and nothing else, which is what
+   * every test and every split deployment wants.
+   *
+   * A path rather than a boolean because the answer differs by where the
+   * process starts from: `tsx src/main.ts` in development and
+   * `node dist/src/main.js` in production sit at different depths, so any
+   * relative default would be wrong in one of them. Hostinger runs a single
+   * Node app for both halves, and this is the seam that allows it.
+   */
+  WEB_ROOT: z.string().optional(),
+
   /* --- sessions (B-016) ------------------------------------------------- */
   /**
    * Symmetric secret for access/refresh tokens. Rotated by adding a new value
@@ -54,6 +69,23 @@ const EnvSchema = z.object({
    * development, in tests, and in a demo — never in production, which is why
    * the refinement below rejects it there rather than trusting a checklist.
    */
+  /**
+   * Skips the code entirely: `POST /api/auth/sign-in` takes a phone number and
+   * returns a session. Anyone who knows a number can become that person.
+   *
+   * It exists because the trial has no SMS contract and reading codes out of a
+   * server log is not something you can put in front of a prospective customer.
+   * It is a demo affordance, not a login, and it is off unless someone says
+   * otherwise out loud in the environment.
+   *
+   * The refinement below refuses it in production. Note what that does NOT
+   * cover: a deployment running with NODE_ENV=development on a public URL —
+   * which is exactly the Hostinger trial — is not protected by anything here.
+   * Turning this on means accepting that, deliberately, for as long as the data
+   * behind it is not real.
+   */
+  AUTH_SKIP_OTP: bool.default('false'),
+
   OTP_PROVIDER: z.enum(['console', 'http']).default('console'),
   OTP_HTTP_URL: z.string().url().optional(),
   OTP_HTTP_TOKEN: z.string().optional(),
@@ -95,6 +127,14 @@ const EnvSchema = z.object({
 export type Env = z.infer<typeof EnvSchema>;
 
 const refined = EnvSchema.superRefine((env, ctx) => {
+  if (env.NODE_ENV === 'production' && env.AUTH_SKIP_OTP) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['AUTH_SKIP_OTP'],
+      message:
+        'AUTH_SKIP_OTP=true hands a session to anyone who knows a phone number — refused in production',
+    });
+  }
   if (env.NODE_ENV === 'production' && env.OTP_PROVIDER === 'console') {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

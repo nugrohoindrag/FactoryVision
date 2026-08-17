@@ -1,6 +1,8 @@
 import { Check, FileSpreadsheet, PackagePlus } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSession } from '@/app/session';
+import { registerFactory } from '@/lib/api/client';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -32,6 +34,37 @@ export function Register() {
   const [ownerName, setOwnerName] = useState('');
   const [phone, setPhone] = useState('');
   const [start, setStart] = useState<'import' | 'blank'>('import');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const applySession = useSession((s) => s.applySession);
+
+  /**
+   * Creates the factory for real (T-102).
+   *
+   * The wizard collected these three fields from the first screen onward but
+   * never sent them anywhere; finishing navigated straight into an app with a
+   * demo tenant. Registration returns a live session, so the operator lands on
+   * their OWN factory — signed in already, which is the point of B-013: three
+   * fields and you are working.
+   */
+  const createFactory = async () => {
+    setCreating(true);
+    setError(null);
+    try {
+      const session = await registerFactory({
+        factoryName,
+        ownerName,
+        // Same +62 chip as sign-in, same leading-zero habit to strip.
+        phone: `+62${phone.replace(/^0+/, '')}`,
+      });
+      applySession(session);
+      navigate(start === 'import' ? '/o/import' : '/f', { replace: true });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not create the factory');
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const canContinue =
     step === 1 ? factoryName.trim() !== '' && ownerName.trim() !== '' && phone.length >= 9 : true;
@@ -163,10 +196,17 @@ export function Register() {
               </CardContent>
             </Card>
 
+            {error && (
+              <p role="alert" className="mt-6 rounded-sm bg-danger-subtle px-4 py-3 text-body-sm text-danger">
+                {error}
+              </p>
+            )}
+
             <Button
               className="mt-8 w-full"
               size="lg"
-              onClick={() => navigate(start === 'import' ? '/o/import' : '/f')}
+              loading={creating}
+              onClick={() => void createFactory()}
             >
               {start === 'import' ? 'Import my Excel file' : 'Start working'}
             </Button>

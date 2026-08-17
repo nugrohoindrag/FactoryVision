@@ -12,11 +12,14 @@
  * launch dependency.
  *
  * The subscription needs a VAPID public key and an endpoint to register
- * against, both of which come from the backend (Tech Stack §1.3, not yet
- * built). Until then `subscribe()` reports `backend-missing` rather than
- * pretending to work — a notification system that silently does nothing is
- * worse than one that says it is not ready.
+ * against, both of which come from the backend. `subscribe()` still reports
+ * `backend-missing` when the key is absent rather than pretending to work — a
+ * notification system that silently does nothing is worse than one that says
+ * it is not ready.
  */
+
+import { apiFetch } from '@/lib/api/client';
+import { ensureFreshToken } from '@/lib/api/sync';
 
 export type PushSupport = 'ready' | 'unsupported' | 'denied' | 'backend-missing';
 
@@ -74,15 +77,24 @@ export async function subscribeToPush(): Promise<PushState> {
     applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
   });
 
-  // The backend stores this against the user so it can target the right phone.
-  await fetch('/api/push/subscribe', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(subscription),
-  }).catch(() => {
-    // Offline is normal here. The subscription exists in the browser and can
-    // be re-sent on the next successful sync.
-  });
+  // The backend stores this against the user so it can target the right phone,
+  // which means it needs to know WHICH user — this call was previously made
+  // without a token and would have been refused by the guard even once the
+  // path was right.
+  const token = await ensureFreshToken();
+  if (token) {
+    // `toJSON()` rather than the subscription object: the endpoint expects
+    // `{ endpoint, keys: { p256dh, auth } }`, and only the serialised form
+    // exposes `keys` — `JSON.stringify(subscription)` happens to call this,
+    // but relying on that made the required shape invisible at the call site.
+    await apiFetch('/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify(subscription.toJSON()),
+    }, token).catch(() => {
+      // Offline is normal here. The subscription exists in the browser and can
+      // be re-sent on the next successful sync.
+    });
+  }
 
   return { support: 'ready', permission, subscribed: true };
 }

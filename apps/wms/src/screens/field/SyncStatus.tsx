@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { db } from '@/db/schema';
-import { drainOutbox } from '@/db/sync';
+import { syncNow } from '@/lib/api/sync';
 import { requestPersistentStorage, storageEstimate, type StorageState } from '@/db/persist';
 import { useTerm } from '@/lib/terms/useTerm';
 
@@ -78,7 +78,7 @@ export function SyncStatus() {
   const sync = async () => {
     setSyncing(true);
     try {
-      await drainOutbox(tenantId);
+      await syncNow(tenantId);
       setStorage(await storageEstimate());
     } finally {
       setSyncing(false);

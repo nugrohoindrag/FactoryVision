@@ -53,11 +53,11 @@ await integrationSuite('reports & dashboard (B-071 → B-081)', () => {
   });
 
   const get = (url: string, auth = tenant.auth) =>
-    test.app.inject({ method: 'GET', url, headers: auth });
+    test.app.inject({ method: 'GET', url: `/api${url}`, headers: auth });
   const post = (url: string, payload: Record<string, unknown> = {}, auth = tenant.auth) =>
-    test.app.inject({ method: 'POST', url, headers: auth, payload });
+    test.app.inject({ method: 'POST', url: `/api${url}`, headers: auth, payload });
   const push = (events: AnyEvent[], auth: { authorization: string }) =>
-    test.app.inject({ method: 'POST', url: '/sync/events', headers: auth, payload: { events } });
+    test.app.inject({ method: 'POST', url: '/api/sync/events', headers: auth, payload: { events } });
 
   /** A full day: 100 kg in with 2 defect, 90 issued, 8 back, 0.5 spilled. */
   async function runFactoryDay(): Promise<void> {

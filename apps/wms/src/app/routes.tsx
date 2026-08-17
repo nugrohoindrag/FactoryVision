@@ -1,8 +1,28 @@
+import type { ReactNode } from 'react';
 import { Navigate, type RouteObject } from 'react-router-dom';
+import { useSession } from '@/app/session';
 import { FieldShell } from '@/components/layout/FieldShell';
 import { OfficeShell } from '@/components/layout/OfficeShell';
+import { isInternalBuild } from '@/lib/buildMode';
 import { Placeholder } from '@/screens/Placeholder';
 import type { TermKey } from '@/lib/terms/useTerm';
+
+/**
+ * Nothing behind a shell is reachable without a server-issued session (T-104).
+ *
+ * `isInternalBuild` keeps the dev server and the `--mode demo` build working
+ * exactly as before, because the role picker (T-020) IS the session there and
+ * the Playwright suite drives the app without ever signing in. A customer build
+ * sets neither flag, and there the gate is real.
+ *
+ * The check is on `tokens`, not on `user`: `user` always holds a value so the
+ * screens keep their types, which makes it useless for deciding this.
+ */
+function RequireSession({ children }: { children: ReactNode }) {
+  const tokens = useSession((s) => s.tokens);
+  if (!tokens && !isInternalBuild) return <Navigate to="/sign-in" replace />;
+  return <>{children}</>;
+}
 
 /**
  * Route map — all 40 P0 screens (UI Spec §3), navigable and empty.
@@ -118,8 +138,24 @@ export const routes: RouteObject[] = [
     lazy: () => import('@/screens/access/Register').then((m) => ({ Component: m.Register })),
   },
   { path: '/', element: <Navigate to="/f" replace /> },
-  { path: '/f', element: <FieldShell />, children: FIELD_SCREENS.map(stub) },
-  { path: '/o', element: <OfficeShell />, children: OFFICE_SCREENS.map(stub) },
+  {
+    path: '/f',
+    element: (
+      <RequireSession>
+        <FieldShell />
+      </RequireSession>
+    ),
+    children: FIELD_SCREENS.map(stub),
+  },
+  {
+    path: '/o',
+    element: (
+      <RequireSession>
+        <OfficeShell />
+      </RequireSession>
+    ),
+    children: OFFICE_SCREENS.map(stub),
+  },
   { path: '*', element: <Navigate to="/f" replace /> },
 ];
 

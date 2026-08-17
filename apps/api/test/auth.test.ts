@@ -26,7 +26,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
   it('registers a factory with three fields and signs in immediately (B-013)', async () => {
     const response = await test.app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: '/api/auth/register',
       payload: {
         factoryName: 'Pabrik Roti Sejahtera',
         ownerName: 'Pak Budi',
@@ -52,10 +52,10 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
       phone: '+628111000002',
       deviceId: crypto.randomUUID(),
     };
-    await test.app.inject({ method: 'POST', url: '/auth/register', payload });
+    await test.app.inject({ method: 'POST', url: '/api/auth/register', payload });
     const second = await test.app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: '/api/auth/register',
       payload: { ...payload, deviceId: crypto.randomUUID() },
     });
     expect(second.statusCode).toBe(409);
@@ -65,7 +65,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
   it('does not reveal whether a phone number has an account (B-014)', async () => {
     const unknown = await test.app.inject({
       method: 'POST',
-      url: '/auth/otp/request',
+      url: '/api/auth/otp/request',
       payload: { phone: '+628999999999' },
     });
     // Same answer either way — otherwise this endpoint is a directory of which
@@ -77,12 +77,12 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
   it('locks out after three wrong codes and says how long (B-014)', async () => {
     const phone = '+628111000003';
     await seedTenant(test, { phone });
-    await test.app.inject({ method: 'POST', url: '/auth/otp/request', payload: { phone } });
+    await test.app.inject({ method: 'POST', url: '/api/auth/otp/request', payload: { phone } });
 
     const attempt = (code: string) =>
       test.app.inject({
         method: 'POST',
-        url: '/auth/otp/verify',
+        url: '/api/auth/otp/verify',
         payload: { phone, code, deviceId: crypto.randomUUID() },
       });
 
@@ -103,8 +103,8 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     const tenant = await seedTenant(test, { phone: '+628111000004' });
     const operator = await addUser(test, tenant, 'OPERATOR');
 
-    const owner = await test.app.inject({ method: 'GET', url: '/auth/me', headers: tenant.auth });
-    const other = await test.app.inject({ method: 'GET', url: '/auth/me', headers: operator.auth });
+    const owner = await test.app.inject({ method: 'GET', url: '/api/auth/me', headers: tenant.auth });
+    const other = await test.app.inject({ method: 'GET', url: '/api/auth/me', headers: operator.auth });
 
     expect(owner.statusCode).toBe(200);
     expect(other.statusCode).toBe(200);
@@ -116,7 +116,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     const phoneB = '+628111000006';
     await seedTenant(test, { phone: phoneB, factoryName: 'Pabrik Lain' });
 
-    await test.app.inject({ method: 'POST', url: '/auth/otp/request', payload: { phone: phoneB } });
+    await test.app.inject({ method: 'POST', url: '/api/auth/otp/request', payload: { phone: phoneB } });
     const otp = await test.prisma.otpRequest.findFirst({
       where: { phone: phoneB, consumedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -135,7 +135,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
 
     const response = await test.app.inject({
       method: 'POST',
-      url: '/auth/otp/verify',
+      url: '/api/auth/otp/verify',
       // Tenant A's device id, tenant B's phone. Re-issuing it would hand one
       // person's hash chain to another.
       payload: { phone: phoneB, code, deviceId: tenantA.deviceId },
@@ -152,7 +152,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
 
     const login = await test.app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: '/api/auth/register',
       payload: {
         factoryName: 'X',
         ownerName: 'X',
@@ -164,7 +164,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
 
     const first = await test.app.inject({
       method: 'POST',
-      url: '/auth/refresh',
+      url: '/api/auth/refresh',
       payload: { refreshToken },
     });
     expect(first.statusCode).toBe(201);
@@ -172,7 +172,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     // The same token a second time is either a stale client or a stolen one.
     const replay = await test.app.inject({
       method: 'POST',
-      url: '/auth/refresh',
+      url: '/api/auth/refresh',
       payload: { refreshToken },
     });
     expect(replay.statusCode).toBe(401);
@@ -185,13 +185,13 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
 
     await test.app.inject({
       method: 'POST',
-      url: `/users/devices/${operator.deviceId}/revoke`,
+      url: `/api/users/devices/${operator.deviceId}/revoke`,
       headers: tenant.auth,
     });
 
     const response = await test.app.inject({
       method: 'GET',
-      url: '/auth/me',
+      url: '/api/auth/me',
       headers: operator.auth,
     });
     // "Sign this device out" must not mean "in an hour".
@@ -205,7 +205,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
 
     const response = await test.app.inject({
       method: 'GET',
-      url: '/users',
+      url: '/api/users',
       headers: operator.auth,
     });
 
@@ -217,7 +217,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     const tenant = await seedTenant(test, { phone: '+628111000011' });
     const response = await test.app.inject({
       method: 'PATCH',
-      url: `/users/${tenant.ownerId}`,
+      url: `/api/users/${tenant.ownerId}`,
       headers: tenant.auth,
       payload: { role: 'OPERATOR' },
     });
@@ -230,7 +230,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     const tenantB = await seedTenant(test, { phone: '+628111000013', factoryName: 'B' });
     await addUser(test, tenantB, 'OPERATOR');
 
-    const response = await test.app.inject({ method: 'GET', url: '/users', headers: tenantA.auth });
+    const response = await test.app.inject({ method: 'GET', url: '/api/users', headers: tenantA.auth });
     expect(response.statusCode).toBe(200);
 
     const ids = (response.json() as { id: string }[]).map((u) => u.id);
@@ -245,7 +245,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
 
     const response = await test.app.inject({
       method: 'POST',
-      url: `/users/devices/${tenantB.deviceId}/revoke`,
+      url: `/api/users/devices/${tenantB.deviceId}/revoke`,
       headers: tenantA.auth,
     });
     expect(response.statusCode).toBe(201);
@@ -254,7 +254,7 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     // it into a no-op. Tenant B's device is still signed in.
     const stillWorks = await test.app.inject({
       method: 'GET',
-      url: '/auth/me',
+      url: '/api/auth/me',
       headers: tenantB.auth,
     });
     expect(stillWorks.statusCode).toBe(200);
@@ -267,12 +267,12 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
       data: { trialEndsAt: new Date(Date.now() - 86_400_000) },
     });
 
-    const read = await test.app.inject({ method: 'GET', url: '/users', headers: tenant.auth });
+    const read = await test.app.inject({ method: 'GET', url: '/api/users', headers: tenant.auth });
     expect(read.statusCode).toBe(200);
 
     const write = await test.app.inject({
       method: 'POST',
-      url: '/users',
+      url: '/api/users',
       headers: tenant.auth,
       payload: { name: 'Baru', phone: '+628111000017', role: 'OPERATOR' },
     });
@@ -294,9 +294,89 @@ await integrationSuite('auth & tenancy (B-013 → B-024)', () => {
     expect(ready.json().checks.clock.ok).toBe(true);
   });
 
+  it('refuses phone-only sign-in unless AUTH_SKIP_OTP is set', async () => {
+    const phone = '+628111000042';
+    await seedTenant(test, { phone });
+
+    // This app runs with the flag off, which is the default everywhere the
+    // trial is not deliberately configured.
+    const response = await test.app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in',
+      payload: { phone, deviceId: crypto.randomUUID() },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error.message).toMatch(/not enabled/);
+  });
+
   it('refuses an unauthenticated request everywhere else', async () => {
-    const response = await test.app.inject({ method: 'GET', url: '/users' });
+    const response = await test.app.inject({ method: 'GET', url: '/api/users' });
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe('UNAUTHENTICATED');
+  });
+});
+
+/**
+ * The trial's phone-only sign-in (AUTH_SKIP_OTP).
+ *
+ * Its own app, because a flag that changes behaviour cannot be proved by the
+ * default one: the suite above can only ever show what happens with it off.
+ * Both halves matter — that it works when asked for, and that it is not quietly
+ * available when it is not.
+ */
+await integrationSuite('trial sign-in without a code (AUTH_SKIP_OTP)', () => {
+  let test: TestApp;
+
+  beforeAll(async () => {
+    test = await startTestApp({ AUTH_SKIP_OTP: true });
+  });
+  afterAll(async () => {
+    await test.close();
+  });
+  beforeEach(async () => {
+    await test.reset();
+  });
+
+  it('issues a full session from a phone number alone', async () => {
+    const phone = '+628999000111';
+    await seedTenant(test, { phone });
+
+    const response = await test.app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in',
+      payload: { phone, deviceId: crypto.randomUUID(), deviceLabel: 'demo phone' },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json();
+    // The same session shape the OTP path returns — a demo that signs in
+    // differently but receives something lesser would prove nothing about the
+    // real flow.
+    expect(body.accessToken).toBeTruthy();
+    expect(body.refreshToken).toBeTruthy();
+    expect(body.user.role).toBe('OWNER');
+
+    // And it is a working session, not just a well-formed one.
+    const me = await test.app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: { authorization: `Bearer ${body.accessToken}` },
+    });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().user.id).toBe(body.user.id);
+  });
+
+  it('says nothing about whether an unknown number has an account', async () => {
+    const response = await test.app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in',
+      payload: { phone: '+628999000222', deviceId: crypto.randomUUID() },
+    });
+
+    expect(response.statusCode).toBe(401);
+    // Identical to the message a deactivated account gets. A login that
+    // distinguishes the two is a login that enumerates customers.
+    expect(response.json().error.message).toMatch(/no longer active/);
   });
 });

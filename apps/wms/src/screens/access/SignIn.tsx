@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import type { Role } from '@fv/contracts';
+import { homeShellFor, useSession } from '@/app/session';
+import { requestOtp, signInWithoutOtp } from '@/lib/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,13 +26,32 @@ import { cn } from '@/lib/utils';
  * 4. **Offline on a NEW device is blocked**, and says why. There is nothing on
  *    the device to verify against, and pretending otherwise would be worse.
  *
- * The OTP exchange itself needs the backend (Tech Stack §1.3), which does not
- * exist yet. Until it does, this screen is honest about being a shell rather
- * than accepting any code typed into it.
+ * The backend now exists and this screen talks to it. Which of the two ways in
+ * it uses is decided by `OTP_ENABLED` below, and the trial takes the shorter
+ * one — see the note there for what that costs.
  */
 
 const RESEND_SECONDS = 60;
 const OTP_LENGTH = 6;
+
+/**
+ * The switch between the two ways in.
+ *
+ * `false` for the trial: there is no SMS contract, and reading codes out of a
+ * server log is not something you can put in front of a prospective customer,
+ * so sign-in asks for a phone number and nothing else. The server half is
+ * governed separately by `AUTH_SKIP_OTP`, and BOTH must agree — the API refuses
+ * codeless sign-in unless its own flag is set.
+ *
+ * Turning it back on is this one line. Everything the code screen needs —
+ * `/api/auth/otp/request`, `/api/auth/otp/verify`, the six boxes, the resend
+ * countdown, the lockout — is present and tested, which is why this is a
+ * constant rather than a deletion.
+ *
+ * Typed `boolean` on purpose: as a bare literal, TypeScript narrows the branch
+ * below to `never` and the code screen stops being typechecked at all.
+ */
+const OTP_ENABLED: boolean = false;
 
 export function SignIn() {
   const navigate = useNavigate();
@@ -41,6 +63,8 @@ export function SignIn() {
   const [countdown, setCountdown] = useState(0);
   const [attempts, setAttempts] = useState(0);
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const applySession = useSession((s) => s.applySession);
 
   const boxRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -55,14 +79,43 @@ export function SignIn() {
 
   const lockedOut = attempts >= 3;
 
-  const sendCode = async () => {
+  /**
+   * The trial signs in on the phone number alone (T-104).
+   *
+   * The six-digit step below is kept, not deleted: `/api/auth/otp/request` and
+   * `/api/auth/otp/verify` exist and are tested, and the only thing missing is
+   * a way to deliver the code that a customer can watch happen. Reinstating it
+   * is repointing this handler at `requestOtp` and letting `step` advance —
+   * which is why the code screen still lives in this file rather than in the
+   * git history.
+   */
+  const submitPhone = async () => {
     if (phone.length < 9 || lockedOut) return;
     setSending(true);
+    setError(null);
+    // The input holds national digits after the +62 chip, and Indonesian
+    // numbers are commonly written with a leading 0 that E.164 does not take.
+    const e164 = `+62${phone.replace(/^0+/, '')}`;
+
     try {
-      // The backend issues the OTP. Until it exists, the flow stops here
-      // rather than accepting an arbitrary code.
-      setStep('code');
-      setCountdown(RESEND_SECONDS);
+      if (OTP_ENABLED) {
+        await requestOtp(e164);
+        setStep('code');
+        setCountdown(RESEND_SECONDS);
+        return;
+      }
+
+      const session = await signInWithoutOtp(e164);
+      applySession(session);
+      navigate(homeShellFor(session.user.role as Role) === 'office' ? '/o' : '/f', {
+        replace: true,
+      });
+    } catch (cause) {
+      // The server's message is the useful one — "no longer active", "wait
+      // fifteen minutes". Replacing it with a generic failure would throw away
+      // the only part that tells the operator what to do next.
+      setError(cause instanceof Error ? cause.message : 'Could not sign in');
+      setAttempts((a) => a + 1);
     } finally {
       setSending(false);
     }
@@ -120,14 +173,20 @@ export function SignIn() {
           </div>
         </div>
 
+        {error && (
+          <p role="alert" className="mt-6 rounded-sm bg-danger-subtle px-4 py-3 text-body-sm text-danger">
+            {error}
+          </p>
+        )}
+
         <Button
           className="mt-8 w-full"
           size="lg"
           loading={sending}
           disabled={phone.length < 9}
-          onClick={() => void sendCode()}
+          onClick={() => void submitPhone()}
         >
-          Send code
+          Sign in
         </Button>
 
         <Button variant="ghost" className="mt-3 w-full" onClick={() => navigate('/register')}>

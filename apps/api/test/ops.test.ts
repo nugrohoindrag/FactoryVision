@@ -49,11 +49,11 @@ await integrationSuite('operations & security (B-082 → B-092)', () => {
   });
 
   const get = (url: string, auth = tenant.auth) =>
-    test.app.inject({ method: 'GET', url, headers: auth });
+    test.app.inject({ method: 'GET', url: `/api${url}`, headers: auth });
   const post = (url: string, payload: Record<string, unknown> = {}, auth = tenant.auth) =>
-    test.app.inject({ method: 'POST', url, headers: auth, payload });
+    test.app.inject({ method: 'POST', url: `/api${url}`, headers: auth, payload });
   const push = (events: AnyEvent[], auth: { authorization: string }) =>
-    test.app.inject({ method: 'POST', url: '/sync/events', headers: auth, payload: { events } });
+    test.app.inject({ method: 'POST', url: '/api/sync/events', headers: auth, payload: { events } });
 
   async function runFactoryDay(): Promise<void> {
     const f = ids();
@@ -131,7 +131,7 @@ await integrationSuite('operations & security (B-082 → B-092)', () => {
     const partner = await post('/master/partners', { name: 'CV Awal' });
     await test.app.inject({
       method: 'PATCH',
-      url: `/master/partners/${partner.json().id}`,
+      url: `/api/master/partners/${partner.json().id}`,
       headers: tenant.auth,
       payload: { name: 'CV Berubah' },
     });
@@ -182,7 +182,7 @@ await integrationSuite('operations & security (B-082 → B-092)', () => {
     void pino;
     const response = await test.app.inject({
       method: 'POST',
-      url: '/auth/otp/request',
+      url: '/api/auth/otp/request',
       payload: { phone: '+628111222333' },
     });
     expect(response.statusCode).toBe(201);

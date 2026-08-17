@@ -6,7 +6,7 @@ import { uuidv7 } from '@fv/contracts';
 import { buildApp } from '../src/bootstrap.js';
 import { withLogDeleteAllowed } from '../src/common/append-only.js';
 import { RateLimitService } from '../src/common/rate-limit.service.js';
-import { setEnvForTesting, loadEnv } from '../src/config/env.js';
+import { setEnvForTesting, loadEnv, type Env } from '../src/config/env.js';
 
 /**
  * B-012 — the integration harness.
@@ -80,7 +80,12 @@ export interface TestApp {
   reset(): Promise<void>;
 }
 
-export async function startTestApp(): Promise<TestApp> {
+/**
+ * `overrides` reaches `AppModule.register`, so a suite can boot the app with
+ * one setting changed — the only honest way to test a flag whose whole purpose
+ * is to alter behaviour, since the default app can only ever prove the default.
+ */
+export async function startTestApp(overrides: Partial<Env> = {}): Promise<TestApp> {
   process.env.DATABASE_URL = TEST_DATABASE_URL;
   process.env.NODE_ENV = 'test';
   process.env.JWT_SECRET ??= 'test-secret-that-is-definitely-long-enough-here';
@@ -88,7 +93,7 @@ export async function startTestApp(): Promise<TestApp> {
   process.env.SCHEDULER_ENABLED = 'false';
   setEnvForTesting(loadEnv());
 
-  const app = await buildApp({ NODE_ENV: 'test' });
+  const app = await buildApp({ NODE_ENV: 'test', ...overrides });
   const prisma = new PrismaClient({ datasources: { db: { url: TEST_DATABASE_URL } } });
 
   const reset = async () => {
@@ -179,7 +184,7 @@ export async function seedTenant(
   const deviceId = crypto.randomUUID();
   const response = await test.app.inject({
     method: 'POST',
-    url: '/auth/register',
+    url: '/api/auth/register',
     payload: {
       factoryName: overrides.factoryName ?? 'Pabrik Uji',
       ownerName: 'Bu Sri',
@@ -216,7 +221,7 @@ export async function addUser(
   const phone = `+6282${String(Math.floor(Math.random() * 1e9)).padStart(9, '0')}`;
   const invited = await test.app.inject({
     method: 'POST',
-    url: '/users',
+    url: '/api/users',
     headers: tenant.auth,
     payload: { name: `User ${role}`, phone, role },
   });
@@ -224,7 +229,7 @@ export async function addUser(
   const { id } = invited.json() as { id: string };
 
   const deviceId = crypto.randomUUID();
-  await test.app.inject({ method: 'POST', url: '/auth/otp/request', payload: { phone } });
+  await test.app.inject({ method: 'POST', url: '/api/auth/otp/request', payload: { phone } });
 
   // The console provider does not send anything, so the code is read straight
   // from the row. This is the only place a test reaches past the API, and it is
@@ -238,7 +243,7 @@ export async function addUser(
   const code = await bruteForceCode(phone, otp.codeHash);
   const verified = await test.app.inject({
     method: 'POST',
-    url: '/auth/otp/verify',
+    url: '/api/auth/otp/verify',
     payload: { phone, code, deviceId },
   });
   if (verified.statusCode >= 400) throw new Error(`otp verify failed: ${verified.body}`);

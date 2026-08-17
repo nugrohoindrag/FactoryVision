@@ -55,12 +55,12 @@ await integrationSuite('two-way sync (B-039 → B-048)', () => {
   });
 
   const push = (events: AnyEvent[], auth: { authorization: string }) =>
-    test.app.inject({ method: 'POST', url: '/sync/events', headers: auth, payload: { events } });
+    test.app.inject({ method: 'POST', url: '/api/sync/events', headers: auth, payload: { events } });
 
   const pull = (auth: { authorization: string }, since?: string) =>
     test.app.inject({
       method: 'GET',
-      url: `/sync/events${since ? `?since=${encodeURIComponent(since)}` : ''}`,
+      url: `/api/sync/events${since ? `?since=${encodeURIComponent(since)}` : ''}`,
       headers: auth,
     });
 
@@ -100,7 +100,7 @@ await integrationSuite('two-way sync (B-039 → B-048)', () => {
 
     const serverStock = await test.app.inject({
       method: 'GET',
-      url: '/stock',
+      url: '/api/stock',
       headers: tenant.auth,
     });
 
@@ -164,7 +164,7 @@ await integrationSuite('two-way sync (B-039 → B-048)', () => {
 
     const response = await test.app.inject({
       method: 'GET',
-      url: '/sync/bootstrap',
+      url: '/api/sync/bootstrap',
       headers: prodAuth,
     });
 
@@ -185,12 +185,12 @@ await integrationSuite('two-way sync (B-039 → B-048)', () => {
   it('hides purchase prices from roles that may not see them (B-019)', async () => {
     const withPrice = await test.app.inject({
       method: 'GET',
-      url: '/sync/master',
+      url: '/api/sync/master',
       headers: tenant.auth,
     });
     const withoutPrice = await test.app.inject({
       method: 'GET',
-      url: '/sync/master',
+      url: '/api/sync/master',
       headers: prodAuth,
     });
 
