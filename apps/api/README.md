@@ -27,6 +27,20 @@ pnpm --filter @fv/api typecheck
 node apps/api/scripts/audit-decimal.mjs
 ```
 
+### Why `build` and `typecheck` run `prisma generate` first
+
+Without a generated client, `@prisma/client` resolves to a stub: `Prisma.Decimal`
+does not exist and every model delegate is typed `{}`, so the compiler reports
+sixty-odd implicit-`any` and missing-property errors across files that are
+perfectly fine. The real cause names Prisma exactly once, near the bottom, which
+is why this is worth knowing before reading that list.
+
+There is also a `postinstall` that generates, but it is **not sufficient on its
+own**: pnpm skips workspace lifecycle scripts when the dependency graph has not
+changed — a repeat install prints `Already up to date` and runs nothing, leaving
+a deleted client deleted. Generating inside the build is the part that always
+runs. It needs no `DATABASE_URL`; generation reads the schema and never connects.
+
 Integration tests **skip with a loud reason** when the database is unreachable.
 CI sets `REQUIRE_DB=1`, which turns that skip into a failure — otherwise a suite
 can quietly stop running the day a container name changes.
