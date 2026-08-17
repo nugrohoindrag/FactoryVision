@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import { AppModule } from './app.module.js';
@@ -95,7 +96,15 @@ export async function buildApp(overrides: Partial<Env> = {}): Promise<NestFastif
    */
   if (config.WEB_ROOT) {
     const fastifyStatic = (await import('@fastify/static')).default;
-    await app.register(fastifyStatic, { root: config.WEB_ROOT, wildcard: false });
+
+    /**
+     * `resolve` because `@fastify/static` rejects a relative root outright, and
+     * the absolute path on a shared host is something nobody should have to
+     * guess correctly in a settings form. `apps/wms/dist` now works, resolved
+     * against the working directory the app was started from; an absolute path
+     * still passes through untouched.
+     */
+    await app.register(fastifyStatic, { root: resolve(config.WEB_ROOT), wildcard: false });
 
     /**
      * The SPA fallback, and the one rule it must never break: an unknown
